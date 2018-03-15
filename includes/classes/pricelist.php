@@ -51,7 +51,7 @@ class PriceList extends \WP_List_Table
         $columns = [
             'price_list_name' => __('Name', 'p18a'),
             'price_list_code' => __('Code', 'p18a'),
-            'price_list_price' => __('Price', 'p18a'),
+            //'price_list_price' => __('Price', 'p18a'),
             'price_list_currency' => __('Currency', 'p18a'),
             'show' => __('Show assigned', 'p18a')
         ];
@@ -76,7 +76,7 @@ class PriceList extends \WP_List_Table
         switch($name) {
             case 'price_list_name':
             case 'price_list_code':
-            case 'price_list_price':
+           // case 'price_list_price':
             case 'price_list_currency':
                 return $item[$name];
                 break;

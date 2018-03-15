@@ -14,6 +14,7 @@ class WooAPI extends \PriorityAPI\API
     private static $instance; // api instance
     private $countries = []; // countries list
     private static $priceList = []; // price lists
+    private $basePriceCOde = "בסיס";
     /**
     * PriorityAPI initialize
     * 
@@ -81,23 +82,35 @@ class WooAPI extends \PriorityAPI\API
         add_filter('loop_shop_post_in', [$this, 'filterProductsByPriceList'], 9999);
 
         // filter product price regarding to price list
-        add_filter('woocommerce_product_get_price', function( $price, $product) {
+        add_filter('woocommerce_product_get_price', [$this, 'filterPrice'], 10, 2);
 
-            $data = $this->getProductDataBySku($product->get_sku());
+        // filter product variation price regarding to price list
+        add_filter('woocommerce_product_variation_get_price', [$this, 'filterPrice'], 10, 2);
+        //add_filter('woocommerce_product_variation_get_regular_price', [$this, 'filterPrice'], 10, 2);
 
-            return $data['price_list_price'];
 
-        }, 10, 2);
+        // filter price range
+        add_filter('woocommerce_variable_sale_price_html', [$this, 'filterPriceRange'], 10, 2);
+        add_filter('woocommerce_variable_price_html', [$this, 'filterPriceRange'], 10, 2);
 
+
+        // check if variation is available to the client
+        add_filter('woocommerce_variation_is_visible', function($status, $id, $parent, $variation){
+
+            $data = $this->getProductDataBySku($variation->get_sku());
+
+            return empty($data) ? false : true; 
+            
+        }, 10, 4);
 
         // set shop currency regarding to price list currency 
         if($user_id = get_current_user_id()) {
 
             $meta = get_user_meta($user_id, '_priority_price_list');
 
-            if ( ! empty($meta)) {
+            $list = empty($meta) ? $this->basePriceCode : $meta[0]; // use base price list if there is no list assigned
 
-                $data = $this->getPriceListData($meta[0]);
+            if($data = $this->getPriceListData($list)) {
 
                 add_filter('woocommerce_currency', function($currency) use($data) {
 
@@ -108,16 +121,15 @@ class WooAPI extends \PriorityAPI\API
                     if ($data['price_list_currency'] == 'ש"ח') {
                         return 'ILS';
                     }
-
+    
                     return $data['price_list_currency'];
         
                 }, 9999);
-        
+
             }
 
         }
 
-        // regular price list ?
 
     }
 
@@ -652,8 +664,7 @@ class WooAPI extends \PriorityAPI\API
             'CUSTNAME' => ( ! $order->get_customer_id()) ? $this->option('walkin_number') : (string) $order->get_customer_id(),
             'CDES'     => $order->get_billing_first_name() . ' ' . $order->get_billing_last_name(),
             'CURDATE'  => date('Y-m-d', strtotime($order->get_date_created())),
-            'BOOKNUM'  => $order->get_order_number(),
-
+            'BOOKNUM'  => $order->get_order_number()
         ];
 
         $shipping_data = [
@@ -670,7 +681,7 @@ class WooAPI extends \PriorityAPI\API
             $shipping_data['ADDRESS2'] = $order->get_shipping_address_2();
         }
 
-        $data['SHIPTO2_SUBFORM'][] = $shipping_data;
+        $data['SHIPTO2_SUBFORM'] = $shipping_data;
 
         // get shipping id
         $shipping_method    = $order->get_shipping_methods();
@@ -686,7 +697,7 @@ class WooAPI extends \PriorityAPI\API
                 $data['ORDERITEMS_SUBFORM'][] = [
                     'PARTNAME' => $product->get_sku(),
                     'TQUANT'   => (int) $item->get_quantity(),
-                    'VATPRICE' => (float) $item->get_total()
+                    'PRICE' => (float) $item->get_total()
                 ];
             }
             
@@ -695,11 +706,11 @@ class WooAPI extends \PriorityAPI\API
         $data['ORDERITEMS_SUBFORM'][] = [
             'PARTNAME' => $this->option('shipping_' . $shipping_method_id, $order->get_shipping_method()),
             'TQUANT'   => 1,
-            'VATPRICE' => (float)  $order->get_total_shipping()
+            'PRICE' =>  floatval($order->get_shipping_total()) - floatval($order->get_shipping_tax())
         ];
 
         // payment info
-        $data['PAYMENTDEF_SUBFORM'][] = [
+        $data['PAYMENTDEF_SUBFORM'] = [
             'PAYMENTCODE' => $this->option('payment_' . $order->get_payment_method(), $order->get_payment_method()),
             'QPRICE'      => floatval($order->get_total()),
             'PAYACCOUNT'  => '',
@@ -789,7 +800,7 @@ class WooAPI extends \PriorityAPI\API
                             'price_list_code' => $list['PLNAME'],
                             'price_list_name' => $list['PLDES'],
                             'price_list_currency' => $list['CODE'],
-                            'price_list_price' => $product['VATPRICE'],
+                            'price_list_price' => $product['PRICE'],
                             'blog_id' => $blog_id
                         ]); 
 
@@ -876,32 +887,36 @@ class WooAPI extends \PriorityAPI\API
 
             $meta = get_user_meta($user_id, '_priority_price_list');
 
-            if ( ! empty($meta)) {
+            $list = empty($meta) ? $this->basePriceCode : $meta[0];
 
-                $products = $GLOBALS['wpdb']->get_results('
-                    SELECT product_sku
-                    FROM ' . $GLOBALS['wpdb']->prefix . 'p18a_pricelists
-                    WHERE price_list_code = "' . $meta[0] . '"
-                    AND blog_id = ' . get_current_blog_id(), 
-                    ARRAY_A
-                );
+            $products = $GLOBALS['wpdb']->get_results('
+                SELECT product_sku
+                FROM ' . $GLOBALS['wpdb']->prefix . 'p18a_pricelists
+                WHERE price_list_code = "' . esc_sql($list) . '"
+                AND blog_id = ' . get_current_blog_id(), 
+                ARRAY_A
+            );
+
+                    
+            $ids = [];
         
-                $ids = [];
-        
-                // get product id
-                foreach($products as $product) {
-                    if ($id = wc_get_product_id_by_sku($product['product_sku'])) {
-                        $ids[] = $id;
-                    }
+            // get product id
+            foreach($products as $product) {
+                if ($id = wc_get_product_id_by_sku($product['product_sku'])) {
+                    $ids[] = $id;
                 }
-
-                return $ids;
-
             }
+
+            // there is no products assigned to price list, return 0
+            if (empty($ids)) return 0;
+            
+            // return ids
+            return $ids;
 
 
         }
 
+        // not logged in user
         return [];
     }
 
@@ -934,7 +949,7 @@ class WooAPI extends \PriorityAPI\API
         $data = $GLOBALS['wpdb']->get_row('
             SELECT *
             FROM ' . $GLOBALS['wpdb']->prefix . 'p18a_pricelists
-            WHERE price_list_code = "' . $code . '"
+            WHERE price_list_code = "' . esc_sql($code) . '"
             AND blog_id = ' . get_current_blog_id(), 
             ARRAY_A
         );
@@ -955,27 +970,58 @@ class WooAPI extends \PriorityAPI\API
 
             $meta = get_user_meta($user_id, '_priority_price_list');
 
-            if ( ! empty($meta)) {
+            $list = empty($meta) ? $this->basePriceCode : $meta[0]; // use base price list if there is no list assigned
 
-                $data = $GLOBALS['wpdb']->get_row('
-                    SELECT price_list_price, price_list_currency
-                    FROM ' . $GLOBALS['wpdb']->prefix . 'p18a_pricelists
-                    WHERE product_sku = "' . $sku . '"
-                    AND price_list_code = "' . $meta[0] . '"
-                    AND blog_id = ' . get_current_blog_id(), 
-                    ARRAY_A
-                );
+            $data = $GLOBALS['wpdb']->get_row('
+                SELECT price_list_price, price_list_currency
+                FROM ' . $GLOBALS['wpdb']->prefix . 'p18a_pricelists
+                WHERE product_sku = "' . esc_sql($sku) . '"
+                AND price_list_code = "' . esc_sql($list) . '"
+                AND blog_id = ' . get_current_blog_id(), 
+                ARRAY_A
+            );
 
-                return $data;
-
-            }
+            return $data;
 
         }
 
         return false;
 
+    }   
+
+
+    // filter product price
+    public function filterPrice($price, $product)
+    {
+        $data = $this->getProductDataBySku($product->get_sku());
+
+        if ($data) return $data['price_list_price'];
+        
+        return $price;
     }
 
-   
+    // filter price range for products with variations
+    public function filterPriceRange($price, $product) 
+    {
+        $variations = $product->get_available_variations();
+
+        $prices = [];
+
+        foreach($variations as $variation) {
+
+            if($data = $this->getProductDataBySku($variation['sku'])) {
+                $prices[] = $data['price_list_price'];
+            }
+
+        }
+
+        if ( ! empty($prices)) {
+            return wc_price(min($prices)) . ' - ' . wc_price(max($prices));
+        }
+
+        return $price;
+
+    }
+     
 
 }

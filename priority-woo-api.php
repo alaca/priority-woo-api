@@ -59,7 +59,7 @@ register_activation_hook(P18AW_SELF, function(){
 // housekeeping
 register_deactivation_hook(P18AW_SELF, function(){
 
-    $GLOBALS['wpdb']->query('DROP TABLE IF EXISTS ' . $GLOBALS['wpdb']->prefix . 'p18a_pricelists;');
+    # $GLOBALS['wpdb']->query('DROP TABLE IF EXISTS ' . $GLOBALS['wpdb']->prefix . 'p18a_pricelists;');
     
 });
 

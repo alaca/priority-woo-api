@@ -25,8 +25,9 @@ class ProductPriceList extends \WP_List_Table
         $hidden    = $this->get_hidden_columns();
         $sortable  = $this->get_sortable_columns();
 
+        // get all products assigned to price list
         $products = $GLOBALS['wpdb']->get_results('
-            SELECT product_sku, price_list_currency
+            SELECT product_sku, price_list_currency, price_list_price
             FROM ' . $GLOBALS['wpdb']->prefix . 'p18a_pricelists
             WHERE price_list_code = "' . urldecode($_GET['pricelist']) . '"
             AND blog_id = ' . get_current_blog_id(), 
@@ -37,23 +38,35 @@ class ProductPriceList extends \WP_List_Table
 
         // get product id
         foreach($products as $product) {
+
             if ($id = wc_get_product_id_by_sku($product['product_sku'])) {
 
                 $ids[] = $id;
 
                 $this->priceListData[$id] = [
                     'currency' => $product['price_list_currency'],
+                    'price' => $product['price_list_price'],
                     'sku' => $product['product_sku'],
                 ];
 
             }
         }
 
-        $data = get_posts([
-            'post_type' => 'product', 
-            'posts_per_page' => -1,
-            'include' => implode(',', $ids)
-        ]);
+        // check for products
+        if (empty($ids)) {
+
+            $data = [];
+
+        } else {
+
+            $data = get_posts([
+                'post_type' => ['product', 'product_variation'], 
+                'posts_per_page' => -1,
+                'include' => implode(',', $ids)
+            ]);
+
+        }
+
 
         #var_dump($data); exit;
 
@@ -63,7 +76,7 @@ class ProductPriceList extends \WP_List_Table
 
         $this->set_pagination_args([
             'total_items' => $totalItems,
-            'per_page'    => $perPage
+            'per_page' => $perPage
         ]);
 
         $data = array_slice($data, (($currentPage - 1) * $perPage), $perPage);
@@ -78,6 +91,7 @@ class ProductPriceList extends \WP_List_Table
         $columns = [
             'name' => __('Product name', 'p18a'),
             'sku' => __('SKU', 'p18a'),
+            'price' => __('Price', 'p18a'),
             'currency' => __('Currency', 'p18a')
         ];
 
@@ -102,9 +116,12 @@ class ProductPriceList extends \WP_List_Table
                 ##return '<a href="' . admin_url('post.php?post=' . $item->ID . '&action=edit') . '">' . $item->post_title . '</a>';
                 break;
             case 'sku':
+            case 'price':
             case 'currency':
 
-                    return $this->priceListData[$item->ID][$name];
+                return isset($this->priceListData[$item->ID][$name]) ? $this->priceListData[$item->ID][$name] : '';
+
+                    #return $this->priceListData[$item->ID][$name];
                 break;
 
         }
